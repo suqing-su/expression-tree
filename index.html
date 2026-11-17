@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>表达式树计算器</title>
+<style>
+:root {
+  --bg: #F3F5F8; --surface: #FFFFFF; --ink: #1E2638; --muted: #667089;
+  --line: #D5DBE6; --grid: #E6EBF3;
+  --op: #2F5BEA; --op-ink: #FFFFFF; --num: #FFFFFF; --num-ink: #1E2638;
+  --mark: #E8A317; --mark-soft: #FFF3D6; --err: #C8372D; --err-soft: #FDECEA;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121826; --surface: #1B2335; --ink: #E6EAF2; --muted: #95A0B8;
+    --line: #2E3A52; --grid: #222C41;
+    --op: #7C9BFF; --op-ink: #0E1424; --num: #1B2335; --num-ink: #E6EAF2;
+    --mark: #F2C14E; --mark-soft: #3A3320; --err: #FF8A80; --err-soft: #3A2224;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+}
+main { max-width: 960px; margin: 0 auto; padding: 28px 18px 60px; }
+h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: .02em; }
+.sub { color: var(--muted); margin: 0 0 22px; }
+.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+
+.input-row { display: flex; gap: 10px; }
+#expr {
+  flex: 1; min-width: 0; font-size: 20px; padding: 12px 14px;
+  border: 2px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink);
+}
+#expr:focus { outline: none; border-color: var(--op); }
+button {
+  font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--ink); padding: 8px 14px;
+}
+button:focus-visible { outline: 2px solid var(--op); outline-offset: 2px; }
+button.primary { background: var(--op); color: var(--op-ink); border-color: var(--op); font-weight: 600; padding: 0 22px; }
+button:disabled { opacity: .4; cursor: default; }
+
+.samples { margin: 14px 0 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.samples span { color: var(--muted); font-size: 13px; margin-right: 4px; }
+.samples button { font-size: 13px; padding: 3px 10px; border-radius: 999px; }
+.samples button.bad { border-style: dashed; }
+
+#error {
+  display: none; margin-top: 16px; padding: 12px 14px; border-radius: 10px;
+  background: var(--err-soft); color: var(--err); border: 1px solid var(--err);
+}
+#error pre { margin: 6px 0 0; font-size: 15px; white-space: pre; overflow-x: auto; }
+
+#out { display: none; }
+.result {
+  margin: 26px 0 18px; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+}
+.result .eq { font-size: 40px; font-weight: 700; color: var(--op); }
+.result .src { color: var(--muted); font-size: 16px; }
+
+.trav { display: grid; grid-template-columns: 7.5em 1fr auto; gap: 8px 12px; align-items: center;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.trav .k { color: var(--muted); font-size: 14px; }
+.trav .v { font-size: 16px; word-break: break-all; }
+.trav button { font-size: 12px; padding: 2px 10px; }
+.note { font-size: 12px; color: var(--muted); margin: 6px 2px 0; }
+label.toggle { font-size: 13px; color: var(--muted); display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+
+.canvas-head { display: flex; justify-content: space-between; align-items: center; margin: 26px 0 8px; gap: 8px; flex-wrap: wrap; }
+.canvas-head h2 { font-size: 17px; margin: 0; }
+.canvas {
+  border: 1px solid var(--line); border-radius: 12px; overflow-x: auto; padding: 18px;
+  background-color: var(--surface);
+  background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+.canvas svg { display: block; margin: 0 auto; }
+
+.player { display: flex; gap: 8px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+.player .count { color: var(--muted); font-size: 13px; margin-left: 4px; }
+#steps { margin: 12px 0 0; padding: 0; list-style: none; counter-reset: s; }
+#steps li {
+  counter-increment: s; padding: 6px 10px; border-radius: 8px; color: var(--muted);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 14px;
+}
+#steps li::before { content: "第 " counter(s) " 步　"; font-family: -apple-system, "PingFang SC", sans-serif; font-size: 12px; }
+#steps li.done { color: var(--ink); }
+#steps li.cur { background: var(--mark-soft); color: var(--ink); font-weight: 600; }
+
+@media (max-width: 560px) {
+  h1 { font-size: 22px; }
+  .trav { grid-template-columns: 1fr auto; }
+  .trav .k { grid-column: 1 / -1; margin-bottom: -6px; }
+  .result .eq { font-size: 32px; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>表达式树计算器</h1>
+  <p class="sub">输入中缀表达式，生成二叉表达式树，给出三种遍历结果，并按后序逐步求值。</p>
+
+  <div class="input-row">
+    <input id="expr" class="mono" value="(3+4)*5-6" autocomplete="off" spellcheck="false"
+           aria-label="中缀表达式" placeholder="例如 (3+4)*5-6">
+    <button class="primary" id="go">计算</button>
+  </div>
+  <div class="samples" id="samples"></div>
+  <p class="note">支持 + − × ÷ %、乘方 ^（或 ²）、括号、小数、负数。</p>
+
+  <div id="error" role="alert"></div>
+
+  <section id="out">
+    <div class="result"><span class="eq mono" id="value"></span><span class="src mono" id="srcShow"></span></div>
+
+    <div class="trav">
+      <span class="k">中序（中缀）</span><span class="v mono" id="tin"></span><button data-copy="tin">复制</button>
+      <span class="k">前序（波兰式）</span><span class="v mono" id="tpre"></span><button data-copy="tpre">复制</button>
+      <span class="k">后序（逆波兰）</span><span class="v mono" id="tpost"></span><button data-copy="tpost">复制</button>
+    </div>
+    <p class="note">
+      <label class="toggle"><input type="checkbox" id="minimal"> 中序只保留必要的括号</label>
+      　前序 / 后序中的 ~ 表示取负。
+    </p>
+
+    <div class="canvas-head">
+      <h2>表达式树</h2>
+      <button id="export">下载 SVG</button>
+    </div>
+    <div class="canvas" id="canvas"></div>
+
+    <div class="player">
+      <button id="prev">上一步</button>
+      <button id="play">逐步演示</button>
+      <button id="next">下一步</button>
+      <button id="all">直接看结果</button>
+      <span class="count" id="count"></span>
+    </div>
+    <ol id="steps"></ol>
+  </section>
+</main>
+
+<script>
+// ===== 表达式树核心 =====
+const PREC = { '+': 1, '-': 1, '*': 2, '/': 2, '%': 2, 'neg': 3, '^': 4 };
+
+class ExprError extends Error {
+  constructor(msg, pos) { super(msg); this.pos = pos; }
+}
+
+// 1. 词法分析：字符串 -> 记号序列
+function tokenize(src) {
+  const s = src.replace(/×/g, '*').replace(/÷/g, '/').replace(/（/g, '(')
+               .replace(/）/g, ')').replace(/²/g, '^2');
+  const toks = [];
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (/\s/.test(c)) { i++; continue; }
+    if (/[0-9.]/.test(c)) {
+      let j = i;
+      while (j < s.length && /[0-9.]/.test(s[j])) j++;
+      const raw = s.slice(i, j);
+      if (!/^(\d+\.?\d*|\.\d+)$/.test(raw)) throw new ExprError(`数字格式错误：“${raw}”`, i);
+      toks.push({ type: 'num', v: parseFloat(raw), pos: i });
+      i = j; continue;
+    }
+    if ('+-*/%^()'.includes(c)) { toks.push({ type: c, pos: i }); i++; continue; }
+    throw new ExprError(`无法识别的字符“${c}”`, i);
+  }
+  return toks;
+}
+
+// 2. 递归下降语法分析：记号序列 -> 二叉表达式树
+//   expr  := term (('+'|'-') term)*
+//   term  := unary (('*'|'/'|'%') unary)*
+//   unary := ('-'|'+') unary | power
+//   power := primary ('^' unary)?        // 右结合
+//   primary := number | '(' expr ')'
+function parse(src) {
+  if (!src.trim()) throw new ExprError('请输入表达式', 0);
+  const toks = tokenize(src);
+  let p = 0, id = 0;
+  const end = () => p >= toks.length;
+  const peek = () => toks[p];
+  const next = () => toks[p++];
+  const mk = o => (o.id = id++, o);
+
+  function expr() {
+    let l = term();
+    while (!end() && (peek().type === '+' || peek().type === '-')) {
+      const op = next().type;
+      l = mk({ type: 'op', op, left: l, right: term() });
+    }
+    return l;
+  }
+  function term() {
+    let l = unary();
+    while (!end() && ['*', '/', '%'].includes(peek().type)) {
+      const op = next().type;
+      l = mk({ type: 'op', op, left: l, right: unary() });
+    }
+    return l;
+  }
+  function unary() {
+    if (!end() && (peek().type === '-' || peek().type === '+')) {
+      const op = next().type;
+      const c = unary();
+      if (op === '+') return c;
+      if (c.type === 'num') return mk({ type: 'num', v: -c.v }); // 负数字面量直接折叠
+      return mk({ type: 'op', op: 'neg', right: c });            // 对子表达式取负：单孩子节点
+    }
+    return power();
+  }
+  function power() {
+    const base = primary();
+    if (!end() && peek().type === '^') {
+      next();
+      return mk({ type: 'op', op: '^', left: base, right: unary() });
+    }
+    return base;
+  }
+  function primary() {
+    if (end()) throw new ExprError('表达式不完整：结尾缺少操作数', src.length);
+    const tk = next();
+    if (tk.type === 'num') return mk({ type: 'num', v: tk.v });
+    if (tk.type === '(') {
+      if (!end() && peek().type === ')') throw new ExprError('括号里是空的', tk.pos);
+      const e = expr();
+      if (end() || peek().type !== ')') throw new ExprError('括号不匹配：这个“(”没有对应的“)”', tk.pos);
+      next();
+      return e;
+    }
+    if (tk.type === ')') throw new ExprError('括号不匹配：多余的“)”', tk.pos);
+    throw new ExprError(`运算符“${tk.type}”前缺少操作数`, tk.pos);
+  }
+
+  const root = expr();
+  if (!end()) {
+    const tk = peek();
+    if (tk.type === ')') throw new ExprError('括号不匹配：多余的“)”', tk.pos);
+    throw new ExprError('这里缺少运算符', tk.pos);
+  }
+  return root;
+}
+
+// 数字格式化：消除浮点尾差
+function fmt(v) { return String(Number(v.toPrecision(12))); }
+function fmtP(v) { return v < 0 ? `(${fmt(v)})` : fmt(v); }
+const SYM = { '+': '+', '-': '-', '*': '*', '/': '/', '%': '%', '^': '^', 'neg': '~' };
+
+// 3. 遍历
+// 中序：还原中缀。full=true 每个子表达式都加括号；否则按优先级只加必要的括号
+function inorder(n, full = false, isRoot = true) {
+  if (n.type === 'num') return n.v < 0 ? `(${fmt(n.v)})` : fmt(n.v);
+  if (n.op === 'neg') {
+    const c = n.right, s = inorder(c, full, false);
+    const out = '-' + (c.type === 'op' && !full ? `(${s})` : s);
+    return full && !isRoot ? `(${out})` : out;
+  }
+  const p = PREC[n.op], L = n.left, R = n.right;
+  let ls = inorder(L, full, false), rs = inorder(R, full, false);
+  if (!full) {
+    if (L.type === 'op') {
+      const pl = PREC[L.op];
+      const wl = L.op === 'neg' ? n.op === '^' : (pl < p || (n.op === '^' && pl === p));
+      if (wl) ls = `(${ls})`;
+    }
+    if (R.type === 'op') {
+      const pr = PREC[R.op];
+      const wr = R.op === 'neg' || pr < p ||
+        (pr === p && n.op !== '^' && (['-', '/', '%'].includes(n.op) || R.op === '%'));
+      if (wr) rs = `(${rs})`;
+    }
+  }
+  const out = `${ls} ${n.op} ${rs}`;
+  return full && !isRoot ? `(${out})` : out;
+}
+// 前序：波兰式
+function preorder(n) {
+  if (n.type === 'num') return fmt(n.v);
+  return n.op === 'neg' ? `~ ${preorder(n.right)}` : `${n.op} ${preorder(n.left)} ${preorder(n.right)}`;
+}
+// 后序：逆波兰式
+function postorder(n) {
+  if (n.type === 'num') return fmt(n.v);
+  return n.op === 'neg' ? `${postorder(n.right)} ~` : `${postorder(n.left)} ${postorder(n.right)} ${n.op}`;
+}
+
+// 4. 求值：后序递归，同时记录每一步
+function evaluate(root) {
+  const steps = [];
+  function ev(n) {
+    if (n.type === 'num') return n.v;
+    if (n.op === 'neg') {
+      const a = ev(n.right), r = -a;
+      steps.push({ id: n.id, text: `-${fmtP(a)}`, r });
+      return r;
+    }
+    const a = ev(n.left), b = ev(n.right);
+    let r;
+    switch (n.op) {
+      case '+': r = a + b; break;
+      case '-': r = a - b; break;
+      case '*': r = a * b; break;
+      case '/': if (b === 0) throw new ExprError(`除数不能为 0：${fmtP(a)} / 0`, -1); r = a / b; break;
+      case '%': if (b === 0) throw new ExprError(`取模的除数不能为 0：${fmtP(a)} % 0`, -1); r = a % b; break;
+      case '^':
+        r = Math.pow(a, b);
+        if (Number.isNaN(r)) throw new ExprError(`负数不能开非整数次方：${fmtP(a)} ^ ${fmtP(b)}`, -1);
+        break;
+    }
+    if (!Number.isFinite(r)) throw new ExprError('计算结果超出数值范围', -1);
+    steps.push({ id: n.id, text: `${fmtP(a)} ${n.op} ${fmtP(b)}`, r });
+    return r;
+  }
+  const value = ev(root);
+  return { value, steps };
+}
+
+// 5. 布局：x 按中序位置排列（保证不重叠），y 按深度
+function layout(root) {
+  const nodes = [], edges = [];
+  const GAP = 18, ROW = 84, H = 36;
+  let x = 0, prevW = null, maxD = 0;
+  const label = n => n.type === 'num' ? fmt(n.v)
+    : ({ '*': '×', '/': '÷', 'neg': '−' }[n.op] || n.op);
+  (function walk(n, d) {
+    if (n.left) walk(n.left, d + 1);
+    n.label = label(n);
+    n.w = Math.max(H + 4, n.label.length * 9.6 + 22);
+    x = prevW === null ? n.w / 2 : x + prevW / 2 + GAP + n.w / 2;
+    prevW = n.w;
+    n.x = x; n.y = d * ROW + H / 2; n.d = d;
+    maxD = Math.max(maxD, d);
+    nodes.push(n);
+    if (n.right) walk(n.right, d + 1);
+  })(root, 0);
+  for (const n of nodes) {
+    if (n.left) edges.push([n, n.left]);
+    if (n.right) edges.push([n, n.right]);
+  }
+  return { nodes, edges, width: x + prevW / 2, height: maxD * ROW + H + 40, H };
+}
+
+if (typeof module !== 'undefined') module.exports = { parse, inorder, preorder, postorder, evaluate, layout, fmt };
+
+
+// ===== 界面 =====
+const $ = id => document.getElementById(id);
+const SAMPLES = [
+  ['(3+4)*5-6', false], ['2^3^2', false], ['-(2.5+1.5)*-4', false],
+  ['((1+2)*(3+4))/(5-6)', false], ['10/4-3%2', false], ['3.14*2²', false], ['-2^2', false],
+  ['(1+2', true], ['5/(3-3)', true], ['2**3', true]
+];
+const LIVE = { // 页面显示用 CSS 变量，自动跟随深浅色
+  edge: 'var(--line)', op: 'var(--op)', opInk: 'var(--op-ink)', num: 'var(--num)', numInk: 'var(--num-ink)',
+  numStroke: 'var(--ink)', mark: 'var(--mark)', badge: 'var(--mark-soft)', badgeInk: 'var(--ink)', bg: 'none'
+};
+const EXPORT = { // 导出文件用固定颜色
+  edge: '#9AA6BC', op: '#2F5BEA', opInk: '#FFFFFF', num: '#FFFFFF', numInk: '#1E2638',
+  numStroke: '#1E2638', mark: '#E8A317', badge: '#FFF3D6', badgeInk: '#1E2638', bg: '#FFFFFF'
+};
+
+let tree = null, result = null, step = 0, timer = null;
+
+function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+
+function svgOf(root, C, k) {
+  const L = layout(root), PAD = 24, H = L.H;
+  const vals = new Map(), done = result.steps.slice(0, k);
+  done.forEach(s => vals.set(s.id, s.r));
+  const curId = k > 0 ? result.steps[k - 1].id : null;
+  const W = L.width + PAD * 2, HT = L.height + PAD;
+  let g = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${HT}" viewBox="0 0 ${W} ${HT}" font-family="Menlo, Consolas, monospace" role="img" aria-label="表达式树">`;
+  if (C.bg !== 'none') g += `<rect width="100%" height="100%" fill="${C.bg}"/>`;
+  g += `<g transform="translate(${PAD},${PAD / 2})">`;
+  for (const [a, b] of L.edges)
+    g += `<line x1="${a.x}" y1="${a.y + H / 2}" x2="${b.x}" y2="${b.y - H / 2}" stroke="${C.edge}" stroke-width="2"/>`;
+  for (const n of L.nodes) {
+    const isOp = n.type === 'op', cur = n.id === curId;
+    const fill = isOp ? C.op : C.num, ink = isOp ? C.opInk : C.numInk;
+    const stroke = cur ? C.mark : (isOp ? C.op : C.numStroke);
+    g += `<rect x="${n.x - n.w / 2}" y="${n.y - H / 2}" width="${n.w}" height="${H}" rx="${H / 2}" fill="${fill}" stroke="${stroke}" stroke-width="${cur ? 4 : 1.5}"/>`;
+    g += `<text x="${n.x}" y="${n.y + 6}" text-anchor="middle" font-size="17" font-weight="600" fill="${ink}">${esc(n.label)}</text>`;
+    if (vals.has(n.id)) {
+      const t = '= ' + fmt(vals.get(n.id)), bw = t.length * 7.8 + 14;
+      g += `<rect x="${n.x - bw / 2}" y="${n.y + H / 2 + 4}" width="${bw}" height="20" rx="5" fill="${C.badge}" stroke="${C.mark}"/>`;
+      g += `<text x="${n.x}" y="${n.y + H / 2 + 18.5}" text-anchor="middle" font-size="13" font-weight="600" fill="${C.badgeInk}">${esc(t)}</text>`;
+    }
+  }
+  return g + '</g></svg>';
+}
+
+function draw() {
+  $('canvas').innerHTML = svgOf(tree, LIVE, step);
+  const n = result.steps.length;
+  $('count').textContent = n ? `${step} / ${n}` : '只有一个数，无需计算';
+  $('prev').disabled = step === 0;
+  $('next').disabled = $('all').disabled = step >= n;
+  $('play').disabled = n === 0;
+  [...$('steps').children].forEach((li, i) => li.className = i < step - 1 ? 'done' : i === step - 1 ? 'cur' : '');
+}
+
+function stop() { clearInterval(timer); timer = null; $('play').textContent = '逐步演示'; }
+
+function showTrav() {
+  $('tin').textContent = inorder(tree, !$('minimal').checked);
+  $('tpre').textContent = preorder(tree);
+  $('tpost').textContent = postorder(tree);
+}
+
+function run() {
+  stop();
+  const src = $('expr').value;
+  $('error').style.display = 'none';
+  try {
+    tree = parse(src);
+    result = evaluate(tree);
+  } catch (e) {
+    $('out').style.display = 'none';
+    let html = esc(e.message);
+    if (e.pos >= 0) html += `<pre class="mono">${esc(src)}\n${' '.repeat(e.pos)}^</pre>`;
+    $('error').innerHTML = html;
+    $('error').style.display = 'block';
+    return;
+  }
+  $('out').style.display = 'block';
+  $('value').textContent = '= ' + fmt(result.value);
+  $('srcShow').textContent = src.trim();
+  showTrav();
+  $('steps').innerHTML = result.steps.map(s => `<li>${esc(s.text)} = ${esc(fmt(s.r))}</li>`).join('');
+  step = 0;
+  draw();
+}
+
+$('go').onclick = run;
+$('expr').addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
+$('minimal').onchange = showTrav;
+$('prev').onclick = () => { stop(); if (step > 0) { step--; draw(); } };
+$('next').onclick = () => { stop(); if (step < result.steps.length) { step++; draw(); } };
+$('all').onclick = () => { stop(); step = result.steps.length; draw(); };
+$('play').onclick = () => {
+  if (timer) return stop();
+  if (step >= result.steps.length) step = 0;
+  $('play').textContent = '暂停';
+  draw();
+  timer = setInterval(() => {
+    if (step >= result.steps.length) return stop();
+    step++; draw();
+  }, 900);
+};
+$('export').onclick = () => {
+  const blob = new Blob([svgOf(tree, EXPORT, step)], { type: 'image/svg+xml' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'expression-tree.svg';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+document.querySelectorAll('[data-copy]').forEach(b => b.onclick = () => {
+  navigator.clipboard?.writeText($(b.dataset.copy).textContent).then(() => {
+    b.textContent = '已复制'; setTimeout(() => b.textContent = '复制', 1200);
+  });
+});
+
+$('samples').innerHTML = '<span>测试数据</span>' + SAMPLES.map(([s, bad]) =>
+  `<button class="mono${bad ? ' bad' : ''}" title="${bad ? '错误示例' : ''}">${esc(s)}</button>`).join('');
+$('samples').querySelectorAll('button').forEach((b, i) => b.onclick = () => { $('expr').value = SAMPLES[i][0]; run(); });
+
+run();
+</script>
+</body>
+</html>
